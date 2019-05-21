@@ -4,7 +4,7 @@
 % c. classification in a range of k_decay and k_growth
 %% a. Aggressive tumor
 clear all; close all; clc
-time = (0:400)';
+time = (0:500)';
 num_patients = 200;
 Ch0 = 8; %ng/mL
 std_h = 1.5; %ng/mL

@@ -1,7 +1,7 @@
 %% observation and sampling time only exponential
 clear all; close all; clc
 %
-time = (0:400)';
+time = (0:500)';
 num_patients = 200;
 %healthy baseline and std
 Ch0 = 8; %ng/mL
