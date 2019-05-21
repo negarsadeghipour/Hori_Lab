@@ -1,0 +1,110 @@
+clear all; close all; clc
+test_iter = 10;
+time = (0:800)';
+num_patients = 200;
+%healthy baseline and std
+Ch0 = 8; %ng/mL
+std_h = 1.5; %ng/mL
+Ch0_rnd = std_h.*randn(num_patients,1) + Ch0;
+k_gr_non_rnd = normrnd(0, 1/18/30,[num_patients,1]);%mean([0 1/18/30]);
+k_decay_non_rnd = normrnd(1/(24*30), 1/150,[num_patients,1]);%mean([1/(24*30) 1/150]);
+
+%unhealthy baseline and std
+Ca0 = 8; %ng/mL
+std_a = 1.5; %ng/mL
+Ca0_rnd = std_a.*randn(num_patients,1) + Ca0;
+k_gr_agg_rnd = normrnd(1/18/30,1/60,[num_patients,1]);%linspace(1/18/30,1/60,50); %day-1
+k_decay_agg_rnd = normrnd(1/30,1/150,[num_patients,1]);%linspace(1/30,1/150,50); %day-1
+
+noise_i = 0:5:90;
+
+C_healthy = zeros(numel(time),num_patients);
+C_unhealthy = zeros(numel(time),num_patients);
+t_onset = 200;
+
+for j = 1:num_patients
+    for i = 1:numel(time)
+        if i < t_onset
+            C_healthy(i,j) = Ch0_rnd(j);
+            C_unhealthy(i,j) = Ca0_rnd(j);
+        else
+            C_healthy(i,j) = Ch0_rnd(j)*exp((k_gr_non_rnd(j)/k_decay_non_rnd(j))*(1-exp(-k_decay_non_rnd(j)*time(i-(t_onset-1)))));
+            C_unhealthy(i,j) = Ca0_rnd(j)*exp((k_gr_agg_rnd(j)/k_decay_agg_rnd(j))*(1-exp(-k_decay_agg_rnd(j)*time(i-(t_onset-1)))));
+        end
+    end
+end
+
+C_healthy_noise1 = zeros(numel(time),num_patients,numel(noise_i));
+C_unhealthy_noise1 = zeros(numel(time),num_patients,numel(noise_i));
+
+for n = 1:numel(noise_i)
+    for k = 1:num_patients
+        
+        C_healthy_noise1(:,k,n) = C_healthy(:,k)+noise_i(n)*rand(1,numel(C_healthy(:,k)))'.*C_healthy(:,k)/100;
+        C_unhealthy_noise1(:,k,n) = C_unhealthy(:,k)+noise_i(n)*rand(1,numel(C_unhealthy(:,k)))'.*C_unhealthy(:,k)/100;
+        
+    end
+end
+figure;plot(time,squeeze(C_healthy_noise1(:,1:5,5)),'r-',time,squeeze(C_unhealthy_noise1(:,1:5,5)),'b-'); 
+% KNN
+% model 1
+p = 0.9;      % proportion of rows to select for training
+N = num_patients;  % total number of rows
+tf_healthy = false(N,numel(noise_i),test_iter);    % create logical index vector
+tf_healthy(1:round(p*N),:,:) = true;
+
+
+p = 0.9;      % proportion of rows to select for training
+N = num_patients;  % total number of rows
+observationspan = round(linspace(200,800,50));
+tf_healthy = false(N,numel(noise_i),test_iter);    % create logical index vector
+tf_healthy(1:round(p*N),:,:) = true;
+% figure; plot(time(1:round(sample_interval(10)):round(observationspan(10))),C_healthy_noise1(1:round(sample_interval(10)):round(observationspan(10)),1),'r',time(1:round(sample_interval(10)):round(observationspan(10))),C_unhealthy_noise1(1:round(sample_interval(10)):round(observationspan(10)),1),'b');
+
+%
+
+
+for m = 1:numel(noise_i)
+    n = 1;
+    meanF1(m) = 0;
+    while (meanF1(m) < .80) && (n < numel(observationspan))
+        for l = 1:test_iter
+            tf_healthy2(:,m,l) = tf_healthy(randperm(N),m,l);   % randomise order
+            C_healthy_noise1_train(:,:,m,l) = C_healthy_noise1(:,squeeze(tf_healthy2(:,m,l)),m);
+            C_healthy_noise1_test(:,:,m,l) = C_healthy_noise1(:,squeeze(~tf_healthy2(:,m,l)),m);
+            % for now using the same index of random selection for healthy and
+            % unhealthy
+            C_unhealthy_noise1_train(:,:,m,l) = C_unhealthy_noise1(:,squeeze(tf_healthy2(:,m,l)),m);
+            C_unhealthy_noise1_test(:,:,m,l) = C_unhealthy_noise1(:,squeeze(~tf_healthy2(:,m,l)),m);
+            
+            train_data = [C_healthy_noise1_train(1:round(observationspan(n)),:,m,l),C_unhealthy_noise1_train(1:round(observationspan(n)),:,m,l)];
+            test_data = [C_healthy_noise1_test(1:round(observationspan(n)),:,m,l),C_unhealthy_noise1_test(1:round(observationspan(n)),:,m,l)];
+            train_labels(:,m,l) = [ones(1,p*N),zeros(1,p*N)];
+            test_true_labels(:,m,l) = [ones(1,round((1-p)*N)),zeros(1,round((1-p)*N))];
+            
+            [predicted_labels(:,m,l),nn_index,accuracy] = KNN_(3,train_data',train_labels(:,m,l)',test_data');
+            [cm(:,:,m,l),gn(:,:,m,l)] = confusionmat(test_true_labels(:,m,l)',predicted_labels(:,m,l));
+            % precision, recall and f1Scores
+            %             accuracy1(:,m,n,l) =  sum(diag(cm(:,:,n,l)))./sum(sum(cm(:,:,n,l)));
+            precision(:,m,l) = diag(cm(:,:,m,l))./sum(cm(:,:,m,l),2);
+            recall(:,m,l) = diag(cm(:,:,m,l))./sum(cm(:,:,m,l),1)';
+            f1Scores(:,m,l) = 2*(precision(:,m,l).*recall(:,m,l))./(precision(:,m,l)+recall(:,m,l));
+            
+        end
+        n = n+1;
+        x(m) = n;
+        meanF1(m) = mean(mean(f1Scores(:,m,:)));
+    end
+    observ_t(m) = observationspan(n);
+    
+end
+
+
+
+
+figure;
+h = plot(noise_i, observ_t-200,'*-','LineWidth', 3);
+title('f1 score - noise');
+xlabel('Noise (%)'); ylabel('Observation span-after cancer onset (day)');
+set(gca,'box','off','TickDir','out',...
+    'FontSize',20,'FontName','Helvetica','LineWidth', 3);
